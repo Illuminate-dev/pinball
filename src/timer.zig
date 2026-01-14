@@ -1,7 +1,5 @@
 const std = @import("std");
-const c = @cImport({
-    @cInclude("SDL3/SDL.h");
-});
+const c = @import("c.zig").c;
 
 pub const TimerNS = struct {
     paused: bool,
