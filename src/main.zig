@@ -48,23 +48,27 @@ fn generateArc(comptime num_points: usize, x: f32, y: f32, r: f32, angle_start: 
     return points;
 }
 
-fn drawUI(renderer: ?*c.SDL_Renderer) !void {
-    const radius = 20.0;
-    const r_frame = [_]c.SDL_FPoint{
-        .{ .x = WIDTH * 0.75, .y = 50 },
+fn renderRoundedRect(renderer: ?*c.SDL_Renderer, rect: c.SDL_FRect, r: f32, comptime quality: usize) !void {
+    const points = [_]c.SDL_FPoint{
+        .{ .x = rect.x, .y = rect.y + r },
     } ++
-        generateArc(10, WIDTH * 0.75 + radius, HEIGHT - 50 - radius, radius, std.math.pi, std.math.pi / 2.0) ++
-        generateArc(10, WIDTH - 50 - radius, HEIGHT - 50 - radius, radius, std.math.pi / 2.0, 0) ++
-        generateArc(10, WIDTH - 50 - radius, 50 + radius, radius, 0, -std.math.pi / 2.0) ++
-        generateArc(10, WIDTH * 0.75 + radius, 50 + radius, radius, 3.0 * std.math.pi / 2.0, std.math.pi) ++ [_]c.SDL_FPoint{
-        .{ .x = WIDTH * 0.75, .y = 50 },
+        generateArc(quality, rect.x + r, rect.y + rect.h - r, r, std.math.pi, std.math.pi / 2.0) ++
+        generateArc(quality, rect.x + rect.w - r, rect.y + rect.h - r, r, std.math.pi / 2.0, 0) ++
+        generateArc(quality, rect.x + rect.w - r, rect.y + r, r, 0, -std.math.pi / 2.0) ++
+        generateArc(quality, rect.x + r, rect.y + r, r, 3.0 * std.math.pi / 2.0, std.math.pi);
+
+    _ = c.SDL_RenderLines(renderer, &points, points.len);
+}
+
+fn drawUI(renderer: ?*c.SDL_Renderer) !void {
+    const r_frame = c.SDL_FRect{
+        .x = WIDTH * 0.75,
+        .y = 50,
+        .w = WIDTH - 50 - (WIDTH * 0.75),
+        .h = HEIGHT - 100,
     };
-
     _ = c.SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    _ = c.SDL_RenderLines(renderer, &r_frame, r_frame.len);
-
-    const test_arc = generateArc(10, 100, 100, 20, std.math.pi / 2.0, std.math.pi);
-    _ = c.SDL_RenderLines(renderer, &test_arc, test_arc.len);
+    try renderRoundedRect(renderer, r_frame, 20, 10);
 }
 
 pub fn main() !void {
