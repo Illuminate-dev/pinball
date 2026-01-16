@@ -30,9 +30,8 @@ pub fn renderRoundedRect(renderer: *c.SDL_Renderer, rect: c.SDL_FRect, r: f32, c
     _ = c.SDL_RenderLines(renderer, &points, points.len);
 }
 
-pub fn renderText(ttf_text_engine: *c.TTF_TextEngine, font: *c.TTF_Font, text: []const u8, x: f32, y: f32, color: c.SDL_Color) !void {
-    const fps_text = c.TTF_CreateText(ttf_text_engine, font, text.ptr, text.len);
-    defer c.TTF_DestroyText(fps_text);
-    _ = c.TTF_SetTextColor(fps_text, color.r, color.g, color.b, color.a);
-    _ = c.TTF_DrawRendererText(fps_text, x, y);
-}
+// pub fn createText(ttf_text_engine: *c.TTF_TextEngine, font: *c.TTF_Font, text: []const u8, x: f32, y: f32, color: c.SDL_Color) ![*c]c.TTF_Text {
+//     const fps_text = c.TTF_CreateText(ttf_text_engine, font, text.ptr, text.len);
+//     _ = c.TTF_SetTextColor(fps_text, color.r, color.g, color.b, color.a);
+//     return fps_text;
+// }

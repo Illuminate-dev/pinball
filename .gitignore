@@ -1,3 +1,6 @@
 .zig-cache
 assets/
 zig-out/
+
+# OS FILES
+.DS_Store

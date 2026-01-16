@@ -1,7 +1,9 @@
 #!/bin/bash
 
+font_url=https://file.openfont.org/archive/b612mono.zip
+
 mkdir -p assets
-wget https://file.openfont.org/archive/42dotsans.zip -O assets/42dotsans.zip
-unzip assets/42dotsans.zip 42dotsans/42dotSans.ttf -d assets/
-mv assets/42dotsans/42dotSans.ttf assets/42dotSans.ttf
-rm -rf assets/42dotsans.zip assets/42dotsans
+wget $font_url -O assets/font.zip --no-check-certificate
+unzip assets/font.zip b612mono/B612Mono-Regular.ttf -d assets/
+mv assets/b612mono/B612Mono-Regular.ttf assets/B612Mono-Regular.ttf
+rm -rf assets/font.zip assets/b612mono

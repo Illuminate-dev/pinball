@@ -1,45 +1,92 @@
 const std = @import("std");
 const c = @import("c.zig").c;
+
 const TimerNS = @import("timer.zig").TimerNS;
+
+const tl = @import("text_label.zig");
+const TextLabel = tl.TextLabel;
+const TextLabelFmt = tl.TextLabelFmt;
+
 const render_utils = @import("render_util.zig");
 const renderRoundedRect = render_utils.renderRoundedRect;
-const renderText = render_utils.renderText;
+// const createText = render_utils.createText;
+
+const utils = @import("utils.zig");
+const sdlValueCheck = utils.sdlValueCheck;
+const WHITE = utils.WHITE;
 
 const WIDTH = 800;
 const HEIGHT = 500;
 const TARGET_FPS = 60;
+const PADDLE_WIDTH = 25.0;
+const PADDLE_HEIGHT = 5;
+const PADDLE_Y = HEIGHT - 40;
+const PADDLE_PIXELS_PER_S = 300;
 
-const WHITE = c.SDL_Color{ .r = 255, .b = 255, .g = 255, .a = 255 };
+const GAME_AREA_LEFT = 150.0;
+const GAME_AREA_RIGHT = WIDTH * 0.75 - 50.0;
 
-fn sdlValueCheck(value: anytype, comptime name: []const u8) !void {
-    const T = @TypeOf(value);
-    const is_ptr = @typeInfo(T) == .pointer or @typeInfo(T) == .optional;
+const UIManager = struct {
+    allocator: std.mem.Allocator,
+    renderer: *c.SDL_Renderer,
+    score_label: ScoreTextLabel,
 
-    if (is_ptr) {
-        if (value == null) {
-            std.debug.print("{s} failed: {s}\n", .{ name, c.SDL_GetError() });
-            return error.SDLCallFailed;
-        }
-    } else if (T == bool) {
-        if (!value) {
-            std.debug.print("{s} failed: {s}\n", .{ name, c.SDL_GetError() });
-            return error.SDLCallFailed;
-        }
-    } else {
-        if (value < 0) {
-            std.debug.print("{s} failed: {s}\n", .{ name, c.SDL_GetError() });
-            return error.SDLCallFailed;
-        }
+    const ScoreTextLabel = TextLabelFmt(struct { u32 }, "{d: >9}");
+
+    fn init(allocator: std.mem.Allocator, font: *c.TTF_Font, text_engine: *c.TTF_TextEngine, renderer: *c.SDL_Renderer) !UIManager {
+        return .{
+            .allocator = allocator,
+            .renderer = renderer,
+            .score_label = try ScoreTextLabel.init(
+                allocator,
+                font,
+                text_engine,
+                .{0},
+                WHITE,
+            ),
+        };
     }
-}
+
+    fn draw(self: UIManager) !void {
+        const v_pad = 50.0;
+        const h_pad = 25.0;
+
+        const r_frame = c.SDL_FRect{
+            .x = WIDTH * 0.75,
+            .y = v_pad,
+            .w = WIDTH - h_pad - (WIDTH * 0.75),
+            .h = HEIGHT - v_pad * 2.0,
+        };
+        _ = c.SDL_SetRenderDrawColor(self.renderer, WHITE.r, WHITE.g, WHITE.b, WHITE.a);
+        try renderRoundedRect(self.renderer, r_frame, 20, 20);
+
+        const v_text_pad = 15.0;
+        const h_text_pad = 15.0;
+
+        try self.score_label.draw(WIDTH * 0.75 + h_text_pad, v_pad + v_text_pad);
+    }
+
+    fn deinit(self: *UIManager) void {
+        self.score_label.deinit();
+    }
+};
 
 const AppContext = struct {
+    allocator: std.mem.Allocator,
     window: *c.SDL_Window,
     renderer: *c.SDL_Renderer,
     ttf_text_engine: *c.TTF_TextEngine,
     font: *c.TTF_Font,
+    key_state: [*c]const bool,
 
-    fn init() !AppContext {
+    ui: UIManager,
+
+    state: struct {
+        score: u32,
+        x: u32,
+    },
+
+    fn init(allocator: std.mem.Allocator) !AppContext {
         try sdlValueCheck(c.SDL_Init(c.SDL_INIT_VIDEO), "SDL_Init");
         errdefer c.SDL_Quit();
 
@@ -58,19 +105,29 @@ const AppContext = struct {
         try sdlValueCheck(ttf_text_engine, "TTF_CreateRendererTextEngine");
         errdefer c.TTF_DestroyRendererTextEngine(ttf_text_engine);
 
-        const font = c.TTF_OpenFont("assets/42dotSans.ttf", 24);
+        const font = c.TTF_OpenFont("assets/B612Mono-Regular.ttf", 24);
         try sdlValueCheck(font, "TTF_OpenFont");
         errdefer c.TTF_CloseFont(font);
 
+        const key_state = c.SDL_GetKeyboardState(null);
+
         return AppContext{
+            .allocator = allocator,
             .window = window.?,
             .renderer = renderer.?,
             .ttf_text_engine = ttf_text_engine.?,
             .font = font.?,
+            .key_state = key_state,
+            .ui = try UIManager.init(allocator, font.?, ttf_text_engine.?, renderer.?),
+            .state = .{
+                .score = 0,
+                .x = WIDTH / 2.0,
+            },
         };
     }
 
     fn deinit(self: *AppContext) void {
+        self.ui.deinit();
         c.TTF_CloseFont(self.font);
         c.TTF_DestroyRendererTextEngine(self.ttf_text_engine);
         c.SDL_DestroyRenderer(self.renderer);
@@ -80,51 +137,76 @@ const AppContext = struct {
     }
 };
 
-fn drawUI(ctx: *AppContext) !void {
-    const r_frame = c.SDL_FRect{
-        .x = WIDTH * 0.75,
-        .y = 50,
-        .w = WIDTH - 50 - (WIDTH * 0.75),
-        .h = HEIGHT - 100,
-    };
-    _ = c.SDL_SetRenderDrawColor(ctx.renderer, 255, 255, 255, 255);
-    try renderRoundedRect(ctx.renderer, r_frame, 20, 20);
+fn drawGame(ctx: *AppContext) !void {
+    _ = c.SDL_SetRenderDrawColor(ctx.renderer, WHITE.r, WHITE.g, WHITE.b, WHITE.a);
+    _ = c.SDL_RenderLine(ctx.renderer, GAME_AREA_LEFT, 0, GAME_AREA_LEFT, HEIGHT);
+    _ = c.SDL_RenderLine(ctx.renderer, GAME_AREA_RIGHT, 0, GAME_AREA_RIGHT, HEIGHT);
 
-    try renderText(ctx.ttf_text_engine, ctx.font, "Hi", 200, 200, WHITE);
+    // draw paddle
+    const paddle_rect = c.SDL_FRect{
+        .x = @as(f32, @floatFromInt(ctx.state.x)) - PADDLE_WIDTH / 2.0,
+        .y = PADDLE_Y,
+        .w = PADDLE_WIDTH,
+        .h = PADDLE_HEIGHT,
+    };
+    _ = c.SDL_RenderFillRect(ctx.renderer, &paddle_rect);
 }
 
 pub fn main() !void {
-    var ctx = try AppContext.init();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var ctx = try AppContext.init(allocator);
     defer ctx.deinit();
 
     var running = true;
     var event: c.SDL_Event = undefined;
 
     var timer = TimerNS.init();
-    var prev_elapsed_ns: u64 = 1;
+    var delta_ns: u64 = 1;
 
     while (running) {
         timer.start();
         while (c.SDL_PollEvent(&event)) {
             switch (event.type) {
                 c.SDL_EVENT_QUIT => running = false,
-                c.SDL_EVENT_KEY_DOWN => {
-                    running = false;
+                c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
+                    ctx.state.score += 1;
                 },
                 else => {},
             }
         }
 
-        const actual_fps = 1_000_000_000.0 / @as(f32, @floatFromInt(prev_elapsed_ns));
+        try ctx.ui.score_label.update(.{ctx.state.score});
+
+        if (ctx.key_state[c.SDL_SCANCODE_LEFT]) {
+            ctx.state.x = std.math.clamp(
+                ctx.state.x - @as(u32, @intCast(PADDLE_PIXELS_PER_S * delta_ns / 1_000_000_000)),
+                @as(u32, @intFromFloat(GAME_AREA_LEFT + PADDLE_WIDTH / 2.0)),
+                @as(u32, @intFromFloat(GAME_AREA_RIGHT - PADDLE_WIDTH / 2.0)),
+            );
+        }
+        if (ctx.key_state[c.SDL_SCANCODE_RIGHT]) {
+            ctx.state.x = std.math.clamp(
+                ctx.state.x + @as(u32, @intCast(PADDLE_PIXELS_PER_S * delta_ns / 1_000_000_000)),
+                @as(u32, @intFromFloat(GAME_AREA_LEFT + PADDLE_WIDTH / 2.0)),
+                @as(u32, @intFromFloat(GAME_AREA_RIGHT - PADDLE_WIDTH / 2.0)),
+            );
+        }
+
+        const actual_fps = 1_000_000_000.0 / @as(f32, @floatFromInt(delta_ns));
         var buf: [20]u8 = undefined;
         const actual_fps_str = try std.fmt.bufPrint(&buf, "FPS: {d:.0}", .{actual_fps});
+        const fps_text = c.TTF_CreateText(ctx.ttf_text_engine, ctx.font, actual_fps_str.ptr, actual_fps_str.len);
+        _ = c.TTF_SetTextColor(fps_text, WHITE.r, WHITE.g, WHITE.b, WHITE.a);
 
         // Draw
         _ = c.SDL_SetRenderDrawColor(ctx.renderer, 0, 0, 0, 255);
         _ = c.SDL_RenderClear(ctx.renderer);
 
-        try drawUI(&ctx);
-        try renderText(ctx.ttf_text_engine, ctx.font, actual_fps_str, 10, 10, WHITE);
+        try ctx.ui.draw();
+        try drawGame(&ctx);
+        _ = c.TTF_DrawRendererText(fps_text, 10, 10);
 
         _ = c.SDL_RenderPresent(ctx.renderer);
 
@@ -136,6 +218,6 @@ pub fn main() !void {
             const sleep_time = ns_per_frame - elapsed_ns;
             _ = c.SDL_DelayNS(sleep_time);
         }
-        prev_elapsed_ns = timer.getTicks();
+        delta_ns = timer.getTicks();
     }
 }
