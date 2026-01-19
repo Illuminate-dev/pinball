@@ -22,20 +22,22 @@ const PADDLE_WIDTH = 25.0;
 const PADDLE_HEIGHT = 5;
 const PADDLE_Y = HEIGHT - 40;
 const PADDLE_PIXELS_PER_S = 300;
+const BALL_PIXELS_PER_S = 300;
+const BALL_RADIUS = 5;
 
 const GAME_AREA_LEFT = 150.0;
 const GAME_AREA_RIGHT = WIDTH * 0.75 - 50.0;
 
 const UIManager = struct {
-    allocator: std.mem.Allocator,
     renderer: *c.SDL_Renderer,
     score_label: ScoreTextLabel,
+    fps_label: FPSTextLabel,
 
     const ScoreTextLabel = TextLabelFmt(struct { u32 }, "{d: >9}");
+    const FPSTextLabel = TextLabelFmt(struct { f32 }, "FPS: {d:.0}");
 
     fn init(allocator: std.mem.Allocator, font: *c.TTF_Font, text_engine: *c.TTF_TextEngine, renderer: *c.SDL_Renderer) !UIManager {
         return .{
-            .allocator = allocator,
             .renderer = renderer,
             .score_label = try ScoreTextLabel.init(
                 allocator,
@@ -44,7 +46,18 @@ const UIManager = struct {
                 .{0},
                 WHITE,
             ),
+            .fps_label = try FPSTextLabel.init(
+                allocator,
+                font,
+                text_engine,
+                .{1.0},
+                WHITE,
+            ),
         };
+    }
+
+    fn deinit(self: *UIManager) void {
+        self.score_label.deinit();
     }
 
     fn draw(self: UIManager) !void {
@@ -64,10 +77,7 @@ const UIManager = struct {
         const h_text_pad = 15.0;
 
         try self.score_label.draw(WIDTH * 0.75 + h_text_pad, v_pad + v_text_pad);
-    }
-
-    fn deinit(self: *UIManager) void {
-        self.score_label.deinit();
+        try self.fps_label.draw(10, 10);
     }
 };
 
@@ -84,6 +94,8 @@ const AppContext = struct {
     state: struct {
         score: u32,
         x: u32,
+        ball_x: u32,
+        ball_y: u32,
     },
 
     fn init(allocator: std.mem.Allocator) !AppContext {
@@ -122,6 +134,8 @@ const AppContext = struct {
             .state = .{
                 .score = 0,
                 .x = WIDTH / 2.0,
+                .ball_x = 100,
+                .ball_y = 100,
             },
         };
     }
@@ -135,22 +149,30 @@ const AppContext = struct {
         c.TTF_Quit();
         c.SDL_Quit();
     }
+
+    fn drawGame(self: AppContext) !void {
+        try sdlValueCheck(c.SDL_SetRenderDrawColor(self.renderer, WHITE.r, WHITE.g, WHITE.b, WHITE.a), "SDL_SetRenderDrawColor");
+        try sdlValueCheck(c.SDL_RenderLine(self.renderer, GAME_AREA_LEFT, 0, GAME_AREA_LEFT, HEIGHT), "SDL_RenderLine");
+        try sdlValueCheck(c.SDL_RenderLine(self.renderer, GAME_AREA_RIGHT, 0, GAME_AREA_RIGHT, HEIGHT), "SDL_RenderLine");
+
+        // draw paddle
+        const paddle_rect = c.SDL_FRect{
+            .x = @as(f32, @floatFromInt(self.state.x)) - PADDLE_WIDTH / 2.0,
+            .y = PADDLE_Y,
+            .w = PADDLE_WIDTH,
+            .h = PADDLE_HEIGHT,
+        };
+        try sdlValueCheck(c.SDL_RenderFillRect(self.renderer, &paddle_rect), "SDL_RenderFillRect");
+
+        // draw ball
+        try render_utils.renderFillCircle(self.renderer, BALL_RADIUS, @as(f32, @floatFromInt(self.state.ball_x)), @as(f32, @floatFromInt(self.state.ball_y)));
+    }
+
+    fn draw(self: AppContext) !void {
+        try self.drawGame();
+        try self.ui.draw();
+    }
 };
-
-fn drawGame(ctx: *AppContext) !void {
-    _ = c.SDL_SetRenderDrawColor(ctx.renderer, WHITE.r, WHITE.g, WHITE.b, WHITE.a);
-    _ = c.SDL_RenderLine(ctx.renderer, GAME_AREA_LEFT, 0, GAME_AREA_LEFT, HEIGHT);
-    _ = c.SDL_RenderLine(ctx.renderer, GAME_AREA_RIGHT, 0, GAME_AREA_RIGHT, HEIGHT);
-
-    // draw paddle
-    const paddle_rect = c.SDL_FRect{
-        .x = @as(f32, @floatFromInt(ctx.state.x)) - PADDLE_WIDTH / 2.0,
-        .y = PADDLE_Y,
-        .w = PADDLE_WIDTH,
-        .h = PADDLE_HEIGHT,
-    };
-    _ = c.SDL_RenderFillRect(ctx.renderer, &paddle_rect);
-}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -182,31 +204,25 @@ pub fn main() !void {
         if (ctx.key_state[c.SDL_SCANCODE_LEFT]) {
             ctx.state.x = std.math.clamp(
                 ctx.state.x - @as(u32, @intCast(PADDLE_PIXELS_PER_S * delta_ns / 1_000_000_000)),
-                @as(u32, @intFromFloat(GAME_AREA_LEFT + PADDLE_WIDTH / 2.0)),
-                @as(u32, @intFromFloat(GAME_AREA_RIGHT - PADDLE_WIDTH / 2.0)),
+                @as(u32, @intFromFloat(GAME_AREA_LEFT + PADDLE_WIDTH / 2.0)) + 1,
+                @as(u32, @intFromFloat(GAME_AREA_RIGHT - PADDLE_WIDTH / 2.0)) + 1,
             );
         }
         if (ctx.key_state[c.SDL_SCANCODE_RIGHT]) {
             ctx.state.x = std.math.clamp(
                 ctx.state.x + @as(u32, @intCast(PADDLE_PIXELS_PER_S * delta_ns / 1_000_000_000)),
-                @as(u32, @intFromFloat(GAME_AREA_LEFT + PADDLE_WIDTH / 2.0)),
-                @as(u32, @intFromFloat(GAME_AREA_RIGHT - PADDLE_WIDTH / 2.0)),
+                @as(u32, @intFromFloat(GAME_AREA_LEFT + PADDLE_WIDTH / 2.0)) + 1,
+                @as(u32, @intFromFloat(GAME_AREA_RIGHT - PADDLE_WIDTH / 2.0)) + 1,
             );
         }
 
         const actual_fps = 1_000_000_000.0 / @as(f32, @floatFromInt(delta_ns));
-        var buf: [20]u8 = undefined;
-        const actual_fps_str = try std.fmt.bufPrint(&buf, "FPS: {d:.0}", .{actual_fps});
-        const fps_text = c.TTF_CreateText(ctx.ttf_text_engine, ctx.font, actual_fps_str.ptr, actual_fps_str.len);
-        _ = c.TTF_SetTextColor(fps_text, WHITE.r, WHITE.g, WHITE.b, WHITE.a);
+        try ctx.ui.fps_label.update(.{actual_fps});
 
         // Draw
         _ = c.SDL_SetRenderDrawColor(ctx.renderer, 0, 0, 0, 255);
         _ = c.SDL_RenderClear(ctx.renderer);
-
-        try ctx.ui.draw();
-        try drawGame(&ctx);
-        _ = c.TTF_DrawRendererText(fps_text, 10, 10);
+        try ctx.draw();
 
         _ = c.SDL_RenderPresent(ctx.renderer);
 
